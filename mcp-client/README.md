@@ -24,9 +24,10 @@ A comprehensive test client that validates all major MCP tools and functionality
 #### Key Features
 
 - Tests MCP server initialization
-- Validates all 6 RSSHub MCP tools
+- Validates all 8 RSSHub MCP tools (including new RSS content retrieval)
 - Provides detailed output and error reporting
 - Session management with unique session IDs
+- Tests both discovery and content retrieval functionality
 
 #### Usage
 
@@ -40,6 +41,8 @@ cargo run -p mcp-client --bin quick_test
 - `get_categories` - Validate category retrieval
 - `get_namespace` - Test namespace functionality (using "bilibili")
 - `get_category` - Test specific category retrieval (using "programming")
+- **`search_namespaces`** 🆕 - Test namespace search functionality (searching for "bili")
+- **`get_feed`** 🆕 - **Test actual RSS content retrieval (most important feature)**
 - Connection initialization and session management
 - Error handling and response validation
 
@@ -93,8 +96,39 @@ let session_id = Uuid::new_v4().to_string();
 
 ### Tool Invocation
 
-Example tool call structure:
+Example tool call structures:
 
+#### Namespace Search
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+        "name": "search_namespaces",
+        "arguments": {
+            "query": "bili"
+        }
+    },
+    "id": "tool-search"
+}
+```
+
+#### RSS Content Retrieval
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+        "name": "get_feed",
+        "arguments": {
+            "path": "bilibili/user/video/2267573"
+        }
+    },
+    "id": "tool-feed"
+}
+```
+
+#### Namespace Information
 ```json
 {
     "jsonrpc": "2.0",
@@ -146,21 +180,29 @@ cargo build -p mcp-client
 The tests provide detailed output showing:
 
 ```text
-=== RSSHub MCP工具快速测试 ===
+=== RSSHub MCP Tool Quick Test ===
 
-1. 初始化连接...
-   ✅ 初始化成功!
+1. Initializing connection...
+   ✅ Initialization successful!
 
-2. 测试 get_categories...
-   ✅ 成功! 获取到分类数据，前100字符: {"categories":{"programming":{"name":"Programming","feeds"...
+2. Testing get_categories...
+   ✅ Success! Retrieved category data, first 100 chars: Available categories: blog, news, programming...
 
-3. 测试 get_namespace (bilibili)...
-   ✅ 成功! bilibili命名空间数据，前100字符: {"routes":{"user":{"path":"/bilibili/user/:uid"...
+3. Testing get_namespace (bilibili)...
+   ✅ Success! bilibili namespace data, first 100 chars: RoutesMap { routes: Some({ "/live/room/:roomID"...
 
-4. 测试 get_category (programming)...
-   ✅ 成功! programming分类数据，前100字符: {"feeds":{"github":{"name":"GitHub","url":"https://...
+4. Testing get_category (programming)...
+   ✅ Success! programming category data, first 100 chars: CategoryItems({ "deeplearning": CategoryInfo...
 
-=== 快速测试完成 ===
+5. Testing search_namespaces (searching for 'bili')...
+   ✅ Success! Search results: Namespaces matching 'bili':
+   bilibili
+   sustainabilitymag
+
+6. Testing get_feed (retrieving RSS content)...
+   ✅ Success! RSS content, first 200 chars: RSS Feed: RSSHub Feed...
+
+=== Quick test completed ===
 ```
 
 ### Error Handling
@@ -190,10 +232,11 @@ if response.status().is_success() {
 
 Use the client during RSSHub MCP server development to:
 
-- Validate new tool implementations
+- Validate new tool implementations (including RSS content retrieval)
 - Test protocol compliance
 - Debug communication issues
 - Performance testing
+- **Validate complete RSS workflow** from discovery to content fetching
 
 ### Integration Testing
 
@@ -212,7 +255,8 @@ Use for manual testing when:
 - Deploying to new environments
 - Validating configuration changes
 - Troubleshooting connection issues
-- Verifying tool functionality
+- **Verifying RSS content retrieval functionality**
+- Testing namespace search efficiency
 
 ## Troubleshooting
 
@@ -263,7 +307,7 @@ To add tests for new MCP tools:
 
 ```rust
 // Add new tool test
-println!("\n5. 测试 new_tool...");
+println!("\n7. Testing new_tool...");
 let tool_request = json!({
     "jsonrpc": "2.0",
     "method": "tools/call",
@@ -277,6 +321,29 @@ let tool_request = json!({
 });
 
 // Send request and handle response
+let response = client
+    .post(url)
+    .header("mcp-session-id", &session_id)
+    .header("Content-Type", "application/json")
+    .json(&tool_request)
+    .send()
+    .await?;
+
+if response.status().is_success() {
+    let result: Value = response.json().await?;
+    if let Some(content) = result
+        .get("result")
+        .and_then(|r| r.get("content"))
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|item| item.get("text"))
+        .and_then(|text| text.as_str())
+    {
+        println!("   ✅ Success! New tool result: {content}");
+    }
+} else {
+    println!("   ❌ Failed: {}", response.status());
+}
 ```
 
 ### Custom Test Scenarios

@@ -4,24 +4,24 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== 简单HTTP客户端测试RSSHub MCP服务器 ===");
+    println!("=== Simple HTTP Client Test for RSSHub MCP Server ===");
 
     let client = reqwest::Client::new();
     let base_url = "http://127.0.0.1:8000";
 
-    // 首先检查服务器是否运行
-    println!("1. 检查服务器连接...");
+    // First check if the server is running
+    println!("1. Checking server connection...");
     let response = client.get(base_url).send().await;
     match response {
-        Ok(resp) => println!("   服务器响应状态: {}", resp.status()),
+        Ok(resp) => println!("   Server response status: {}", resp.status()),
         Err(e) => {
-            println!("   服务器连接失败: {e}");
+            println!("   Server connection failed: {e}");
             return Ok(());
         }
     }
 
-    // 尝试MCP初始化
-    println!("\n2. 尝试MCP初始化...");
+    // Try MCP initialization
+    println!("\n2. Attempting MCP initialization...");
     let init_payload = json!({
         "jsonrpc": "2.0",
         "id": "init-1",
@@ -36,11 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // 测试不同的端点
+    // Test different endpoints
     let endpoints = vec!["/", "/mcp", "/message"];
 
     for endpoint in endpoints {
-        println!("\n   测试端点: {base_url}{endpoint}");
+        println!("\n   Testing endpoint: {base_url}{endpoint}");
         let response = client
             .post(format!("{base_url}{endpoint}"))
             .header("Content-Type", "application/json")
@@ -50,27 +50,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match response {
             Ok(resp) => {
-                println!("     状态: {}", resp.status());
+                println!("     Status: {}", resp.status());
                 let headers: Vec<String> = resp
                     .headers()
                     .iter()
                     .map(|(k, v)| format!("{k}: {v:?}"))
                     .collect();
-                println!("     响应头: {headers:?}");
+                println!("     Response headers: {headers:?}");
 
                 if resp.status().is_success() {
                     match resp.text().await {
-                        Ok(body) => println!("     响应体: {body}"),
-                        Err(e) => println!("     读取响应体失败: {e}"),
+                        Ok(body) => println!("     Response body: {body}"),
+                        Err(e) => println!("     Failed to read response body: {e}"),
                     }
                 } else {
                     match resp.text().await {
-                        Ok(body) => println!("     错误响应: {body}"),
-                        Err(_) => println!("     无响应体"),
+                        Ok(body) => println!("     Error response: {body}"),
+                        Err(_) => println!("     No response body"),
                     }
                 }
             }
-            Err(e) => println!("     请求失败: {e}"),
+            Err(e) => println!("     Request failed: {e}"),
         }
 
         tokio::time::sleep(Duration::from_millis(100)).await;

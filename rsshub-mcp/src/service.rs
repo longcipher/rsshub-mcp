@@ -48,6 +48,48 @@ impl RSSHubService {
         Ok(format!("{routes:#?}"))
     }
 
+    /// Handle search_namespaces tool call - More useful than listing all
+    async fn handle_search_namespaces(
+        &self,
+        query: Option<&str>,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let all_namespaces = self.client.get_all_namespaces().await?;
+
+        if let Some(search_query) = query {
+            // Filter namespaces that match the search query
+            let search_lower = search_query.to_lowercase();
+            let filtered: Vec<String> = all_namespaces
+                .keys()
+                .filter(|key| key.to_lowercase().contains(&search_lower))
+                .cloned()
+                .collect();
+
+            if filtered.is_empty() {
+                Ok(format!(
+                    "No namespaces found matching '{search_query}'. Available namespaces: {}",
+                    all_namespaces
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                ))
+            } else {
+                Ok(format!(
+                    "Namespaces matching '{search_query}':\n{}",
+                    filtered.join("\n")
+                ))
+            }
+        } else {
+            // Return a concise list of all namespaces
+            let namespace_list: Vec<String> = all_namespaces.keys().cloned().collect();
+            Ok(format!(
+                "Available namespaces ({} total):\n{}",
+                namespace_list.len(),
+                namespace_list.join(", ")
+            ))
+        }
+    }
+
     /// Handle get_radar_rules tool call
     async fn handle_get_radar_rules(
         &self,
@@ -82,6 +124,29 @@ impl RSSHubService {
         let category_items = self.client.get_category(category).await?;
         Ok(format!("{category_items:#?}"))
     }
+
+    /// Handle get_feed tool call - Fetch actual RSS content
+    async fn handle_get_feed(
+        &self,
+        path: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let feed_response = self.client.get_feed(path).await?;
+
+        // Format the response in a more user-friendly way
+        if let Some(raw_content) = &feed_response.raw_content {
+            // Return the raw RSS content for now
+            // In a more sophisticated implementation, we'd parse and format the feed items
+            Ok(format!(
+                "RSS Feed: {}\nDescription: {}\n\nRaw Content:\n{}",
+                feed_response.title, feed_response.description, raw_content
+            ))
+        } else {
+            Ok(format!(
+                "Feed: {} - {}",
+                feed_response.title, feed_response.description
+            ))
+        }
+    }
 }
 
 #[async_trait]
@@ -113,6 +178,23 @@ impl ToolHandler for RSSHubService {
                         }
                     },
                     "required": ["namespace"]
+                }),
+            },
+            Tool {
+                name: "search_namespaces".to_string(),
+                description: "Search for namespaces by keyword or list all available namespaces"
+                    .to_string(),
+                annotations: None,
+                output_schema: None,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Optional search keyword to filter namespaces (e.g., 'social', 'news')"
+                        }
+                    },
+                    "required": []
                 }),
             },
             Tool {
@@ -169,6 +251,22 @@ impl ToolHandler for RSSHubService {
                     "required": ["category"]
                 }),
             },
+            Tool {
+                name: "get_feed".to_string(),
+                description: "Fetch actual RSS feed content from a RSSHub path".to_string(),
+                annotations: None,
+                output_schema: None,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "The RSSHub path (e.g., 'bilibili/user/video/2267573', 'github/issue/DIYgod/RSSHub')"
+                        }
+                    },
+                    "required": ["path"]
+                }),
+            },
         ];
 
         Ok(ListToolsResponse {
@@ -196,6 +294,14 @@ impl ToolHandler for RSSHubService {
                     })?;
                 self.handle_get_namespace(namespace).await
             }
+            "search_namespaces" => {
+                let query = request
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.get("query"))
+                    .and_then(|v| v.as_str());
+                self.handle_search_namespaces(query).await
+            }
             "get_radar_rules" => self.handle_get_radar_rules().await,
             "get_radar_rule" => {
                 let rule_name = request
@@ -219,6 +325,17 @@ impl ToolHandler for RSSHubService {
                         MCPError::invalid_params("category parameter is required".to_string())
                     })?;
                 self.handle_get_category(category).await
+            }
+            "get_feed" => {
+                let path = request
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.get("path"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        MCPError::invalid_params("path parameter is required".to_string())
+                    })?;
+                self.handle_get_feed(path).await
             }
             _ => {
                 return Err(MCPError::method_not_found(format!(

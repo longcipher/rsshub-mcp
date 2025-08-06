@@ -9,11 +9,11 @@ homepage = "https://github.com/akjong/rsshub-mcp"
 repository = "https://github.com/akjong/rsshub-mcp"
 
 [dependencies]
+eyre = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-eyre = { workspace = true }
 
 [dev-dependencies]
 mockito = { workspace = true }

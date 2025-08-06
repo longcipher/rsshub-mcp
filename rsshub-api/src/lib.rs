@@ -92,6 +92,32 @@ impl RsshubApiClient {
             Err(eyre::eyre!("Failed to fetch category"))
         }
     }
+
+    /// Fetch RSS feed content from a RSSHub route
+    pub async fn get_feed(&self, path: &str) -> Result<FeedResponse> {
+        let path = path.strip_prefix('/').unwrap_or(path);
+        let url = format!("{}/{}", self.host, path);
+        let response = self.client.get(&url).send().await?;
+        if response.status().is_success() {
+            let content = response.text().await?;
+            let feed = self.parse_rss_content(&content)?;
+            Ok(feed)
+        } else {
+            Err(eyre::eyre!("Failed to fetch RSS feed from path: {}", path))
+        }
+    }
+
+    /// Parse RSS content using feedparser-like logic
+    fn parse_rss_content(&self, content: &str) -> Result<FeedResponse> {
+        // For now, return the raw RSS content
+        // In a full implementation, you'd use a proper RSS parser
+        Ok(FeedResponse {
+            title: "RSS Feed".to_string(),
+            description: "RSS feed content".to_string(),
+            items: vec![],
+            raw_content: Some(content.to_string()),
+        })
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -179,30 +205,48 @@ pub type NamespaceResp = HashMap<String, RoutesMap>;
 
 pub type RulesResp = HashMap<String, RulesInfo>;
 
-// 代表每个域名下的信息，例如 "81.cn" 对应的值
-#[derive(Deserialize, Serialize, Debug, Clone)] // 添加 Clone 以便需要时复制
+// Represents information under each domain, e.g., the value corresponding to "81.cn"
+#[derive(Deserialize, Serialize, Debug, Clone)] // Add Clone for copying when needed
 pub struct RulesInfo {
-    // 使用 serde 重命名 _name 字段，因为 Rust 标识符通常不以下划线开头
+    // Use serde to rename the _name field, as Rust identifiers typically don't start with underscore
     #[serde(rename = "_name")]
     pub name: String,
 
-    // 使用 #[serde(flatten)] 来捕获所有其他的键 (像 "81rc", "ds", ".", "www" 等)
-    // 这些键的值是一个 RouteInfo 对象的数组 (Vec<RouteInfo>)
+    // Use #[serde(flatten)] to capture all other keys (like "81rc", "ds", ".", "www", etc.)
+    // The values of these keys are arrays of RouteInfo objects (Vec<RouteInfo>)
     #[serde(flatten)]
     pub sections: HashMap<String, Vec<RouteInfo>>,
 }
 
-// 代表每个路由规则的具体信息，位于数组中
-#[derive(Deserialize, Serialize, Debug, Clone)] // 添加 Clone
+// Represents specific information for each routing rule, located in the array
+#[derive(Deserialize, Serialize, Debug, Clone)] // Add Clone
 pub struct RouteInfo {
     pub title: String,
     pub docs: String,
-    pub source: Vec<String>, // source 是一个字符串数组
+    pub source: Vec<String>, // source is a string array
     pub target: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct CategoryItems(pub HashMap<String, CategoryInfo>); // Top-level map
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct FeedResponse {
+    pub title: String,
+    pub description: String,
+    pub items: Vec<FeedItem>,
+    pub raw_content: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct FeedItem {
+    pub title: String,
+    pub description: String,
+    pub link: String,
+    pub pub_date: Option<String>,
+    pub author: Option<String>,
+    pub categories: Vec<String>,
+}
 
 #[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")] // Handle potential camelCase in top-level service fields if any

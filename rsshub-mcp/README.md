@@ -11,14 +11,18 @@ This MCP server bridges RSSHub's powerful RSS aggregation capabilities with the 
 - **MCP Protocol Compliance**: Full implementation of the Model Context Protocol specification
 - **High Performance**: Built on `ultrafast-mcp` framework for optimal speed
 - **RSSHub Integration**: Direct integration with RSSHub API through the `rsshub-api` crate
-- **Tool-Based Interface**: Provides 6 specialized tools for content discovery
+- **Tool-Based Interface**: Provides 8 specialized tools for content discovery and RSS retrieval
+- **RSS Content Retrieval**: Fetch actual RSS feed content, not just metadata
+- **Smart Search**: Efficiently filter through hundreds of namespaces with keyword search
 - **HTTP Transport**: Supports HTTP-based MCP communication
 - **Configurable**: Flexible configuration options for different deployment scenarios
 - **Logging**: Comprehensive logging with configurable levels
 
 ## MCP Tools
 
-The server provides 6 tools that expose RSSHub functionality:
+The server provides 8 tools that expose RSSHub functionality:
+
+### Core Discovery Tools
 
 ### 1. `get_all_namespaces`
 
@@ -33,31 +37,49 @@ The server provides 6 tools that expose RSSHub functionality:
   - `namespace` (string): The namespace identifier (e.g., "bilibili", "github")
 - **Returns**: All routes available within the specified namespace
 
-### 3. `get_radar_rules`
+### 3. `search_namespaces` 🆕
+
+- **Description**: Search and filter namespaces by keyword (much more practical than listing all)
+- **Parameters**:
+  - `query` (string, optional): Search keyword to filter namespaces
+- **Returns**: Filtered list of namespaces matching the search query
+- **Example**: Search for "bili" returns "bilibili", "sustainabilitymag"
+
+### 4. `get_radar_rules`
 
 - **Description**: Get all radar rules for automatic feed detection
 - **Parameters**: None
 - **Returns**: Complete radar rules database for feed discovery
 
-### 4. `get_radar_rule`
+### 5. `get_radar_rule`
 
 - **Description**: Get radar rule for a specific domain
 - **Parameters**:
-  - `domain` (string): The domain name (e.g., "github.com", "youtube.com")
+  - `rule_name` (string): The domain/rule name (e.g., "github.com", "youtube.com")
 - **Returns**: Radar configuration for the specified domain
 
-### 5. `get_categories`
+### 6. `get_categories`
 
 - **Description**: Get all available content categories
 - **Parameters**: None
 - **Returns**: Complete list of content categories
 
-### 6. `get_category`
+### 7. `get_category`
 
 - **Description**: Get feeds for a specific category
 - **Parameters**:
   - `category` (string): The category identifier (e.g., "programming", "news")
 - **Returns**: All feeds within the specified category
+
+### Content Retrieval Tool
+
+### 8. `get_feed` 🆕
+
+- **Description**: **Fetch actual RSS content from RSSHub paths (most important feature)**
+- **Parameters**:
+  - `path` (string): The RSSHub path (e.g., "bilibili/user/video/2267573", "github/issue/DIYgod/RSSHub")
+- **Returns**: Actual RSS feed content including title, description, and feed items
+- **Note**: This enables complete RSS workflow - from discovery to content retrieval
 
 ## Installation and Usage
 
@@ -133,13 +155,23 @@ const client = new MCPClient({
 // Initialize connection
 await client.initialize();
 
-// Use tools
+// Use discovery tools
 const namespaces = await client.callTool("get_all_namespaces", {});
 const bilibiliRoutes = await client.callTool("get_namespace", { 
     namespace: "bilibili" 
 });
 const programmingFeeds = await client.callTool("get_category", { 
     category: "programming" 
+});
+
+// Use new search functionality
+const searchResults = await client.callTool("search_namespaces", { 
+    query: "bili" 
+});
+
+// Fetch actual RSS content
+const rssFeed = await client.callTool("get_feed", { 
+    path: "bilibili/user/video/2267573" 
 });
 ```
 
@@ -168,6 +200,25 @@ The server exposes the MCP protocol over HTTP at:
 2. **Service Layer** (`service.rs`): MCP tool implementations and business logic
 3. **Configuration** (`config.rs`): Configuration management and CLI parsing
 4. **Logging** (`log.rs`): Structured logging setup
+
+## Recent Improvements
+
+Based on analysis of reference implementations, the server now includes enhanced functionality:
+
+### Key Enhancements
+
+1. **RSS Content Retrieval** - The `get_feed` tool enables users to fetch actual RSS content, not just metadata discovery
+2. **Smart Namespace Search** - The `search_namespaces` tool efficiently filters through 250+ namespaces using keywords
+3. **Enhanced Data Structures** - Proper type definitions for RSS content handling
+4. **Complete RSS Workflow** - From discovery → configuration → content retrieval
+
+### Quality Advantages
+
+- **Type Safety**: Full compile-time guarantees through Rust's type system
+- **Performance**: Async/await with tokio for efficient I/O operations
+- **Memory Safety**: No runtime memory errors possible
+- **Error Handling**: Comprehensive error propagation with proper types
+- **Modularity**: Clean separation of concerns
 
 ## Development
 
