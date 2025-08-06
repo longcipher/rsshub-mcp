@@ -20,8 +20,9 @@ pub struct Config {
 
 impl Config {
     pub fn new(config: Option<PathBuf>) -> Result<Self, ConfigError> {
+        let config_path = config.unwrap_or_else(|| PathBuf::from("config.toml"));
         let c = FileConfig::builder()
-            .add_source(File::from(config.expect("Config file not found")))
+            .add_source(File::from(config_path))
             .add_source(Environment::with_prefix("RSSHUB_MCP"))
             .build()?;
         c.try_deserialize()

@@ -1,25 +1,21 @@
+//! RSSHub API Client Library
+//!
+//! This crate provides a Rust client for interacting with RSSHub APIs,
+//! allowing you to fetch namespace information, radar rules, and category data.
+
 #![allow(unused)]
 use std::{collections::HashMap, time::Duration};
 
 use eyre::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const DEFAULT_HOST: &str = "https://rsshub.akjong.com";
 const DEFAULT_TIMEOUT: u64 = 120;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RsshubClientConfig {
     pub host: Option<String>,
     pub timeout: Option<u64>,
-}
-
-impl Default for RsshubClientConfig {
-    fn default() -> Self {
-        Self {
-            host: None,
-            timeout: None,
-        }
-    }
 }
 
 #[derive(Default, Debug, Clone)]
@@ -37,11 +33,12 @@ impl RsshubApiClient {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(timeout))
                 .build()
-                .unwrap(),
+                .expect("Failed to build HTTP client"),
             host: host.to_string(),
         }
     }
-    async fn get_all_namespaces(&self) -> Result<NamespaceResp> {
+
+    pub async fn get_all_namespaces(&self) -> Result<NamespaceResp> {
         let url = format!("{}/api/namespace", self.host);
         let response = self.client.get(&url).send().await?;
         if response.status().is_success() {
@@ -52,7 +49,7 @@ impl RsshubApiClient {
         }
     }
 
-    async fn get_namespace(&self, namespace: &str) -> Result<RoutesMap> {
+    pub async fn get_namespace(&self, namespace: &str) -> Result<RoutesMap> {
         let url = format!("{}/api/namespace/{}", self.host, namespace);
         let response = self.client.get(&url).send().await?;
         if response.status().is_success() {
@@ -63,7 +60,7 @@ impl RsshubApiClient {
         }
     }
 
-    async fn get_all_radar_rules(&self) -> Result<RulesResp> {
+    pub async fn get_all_radar_rules(&self) -> Result<RulesResp> {
         let url = format!("{}/api/radar/rules", self.host);
         let response = self.client.get(&url).send().await?;
         if response.status().is_success() {
@@ -74,7 +71,7 @@ impl RsshubApiClient {
         }
     }
 
-    async fn get_radar_rule(&self, domain: &str) -> Result<RulesInfo> {
+    pub async fn get_radar_rule(&self, domain: &str) -> Result<RulesInfo> {
         let url = format!("{}/api/radar/rules/{}", self.host, domain);
         let response = self.client.get(&url).send().await?;
         if response.status().is_success() {
@@ -85,7 +82,7 @@ impl RsshubApiClient {
         }
     }
 
-    async fn get_category(&self, category: &str) -> Result<CategoryItems> {
+    pub async fn get_category(&self, category: &str) -> Result<CategoryItems> {
         let url = format!("{}/api/category/{}", self.host, category);
         let response = self.client.get(&url).send().await?;
         if response.status().is_success() {
@@ -97,7 +94,7 @@ impl RsshubApiClient {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct RouteDetails {
     pub path: MultiType,
     pub name: String,
@@ -119,21 +116,21 @@ pub struct RouteDetails {
     pub view: Option<u64>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum MultiType {
     Single(String),
     Multiple(Vec<String>),
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum RadarType {
     Single(RadarItem),
     Multiple(Vec<RadarItem>),
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")] // Matches the JSON keys like requireConfig
 pub struct Features {
     pub require_config: Option<RequireConfig>, // Renamed to snake_case in Rust
@@ -147,7 +144,7 @@ pub struct Features {
 }
 
 // Represents the "requireConfig" field, which can be a boolean or a list of objects
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(untagged)] // Tells serde to try deserializing as one variant, then the next
 pub enum RequireConfig {
     Bool(bool),
@@ -155,7 +152,7 @@ pub enum RequireConfig {
 }
 
 // Represents an object within the "requireConfig" list
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ConfigDetail {
     pub name: String,
     pub optional: Option<bool>,
@@ -163,7 +160,7 @@ pub struct ConfigDetail {
 }
 
 // Represents an object within the "radar" array
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub struct RadarItem {
     pub source: MultiType,
     // Target is not always present
@@ -173,7 +170,7 @@ pub struct RadarItem {
     pub title: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct RoutesMap {
     pub routes: Option<HashMap<String, RouteDetails>>,
 }
@@ -183,7 +180,7 @@ pub type NamespaceResp = HashMap<String, RoutesMap>;
 pub type RulesResp = HashMap<String, RulesInfo>;
 
 // 代表每个域名下的信息，例如 "81.cn" 对应的值
-#[derive(Deserialize, Debug, Clone)] // 添加 Clone 以便需要时复制
+#[derive(Deserialize, Serialize, Debug, Clone)] // 添加 Clone 以便需要时复制
 pub struct RulesInfo {
     // 使用 serde 重命名 _name 字段，因为 Rust 标识符通常不以下划线开头
     #[serde(rename = "_name")]
@@ -196,7 +193,7 @@ pub struct RulesInfo {
 }
 
 // 代表每个路由规则的具体信息，位于数组中
-#[derive(Deserialize, Debug, Clone)] // 添加 Clone
+#[derive(Deserialize, Serialize, Debug, Clone)] // 添加 Clone
 pub struct RouteInfo {
     pub title: String,
     pub docs: String,
@@ -204,10 +201,10 @@ pub struct RouteInfo {
     pub target: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct CategoryItems(pub HashMap<String, CategoryInfo>); // Top-level map
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")] // Handle potential camelCase in top-level service fields if any
 pub struct CategoryInfo {
     pub name: String,
@@ -223,7 +220,7 @@ pub struct CategoryInfo {
 }
 
 // Optional nested structure for zh translations if present
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ZhTranslation {
     pub name: Option<String>,
