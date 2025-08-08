@@ -14,6 +14,10 @@ path = "src/simple_test.rs"
 name = "quick_test"
 path = "src/quick_test.rs"
 
+[[bin]]
+name = "generic"
+path = "src/generic.rs"
+
 [dependencies]
 reqwest = { workspace = true }
 serde_json = { workspace = true }

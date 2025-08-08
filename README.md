@@ -56,7 +56,7 @@ rsshub-mcp/
 - **Features**:
   - Built on ultrafast-mcp framework
   - Depends on rsshub-api library
-  - Provides 8 MCP tools (including RSS content retrieval)
+  - Provides 10 MCP tools (including RSS content retrieval)
   - HTTP transport protocol support
 
 ### 3. mcp-client (v0.1.0)
@@ -69,40 +69,135 @@ rsshub-mcp/
 
 ## Core Functionality
 
-### MCP Tools (8 Total)
+### MCP Tools
 
-The server provides 8 comprehensive tools for RSSHub interaction:
+The server exposes tools for RSSHub interaction via MCP:
 
 #### Core Discovery Tools
+
 1. `get_all_namespaces` - Get all available namespaces
 2. `get_namespace` - Get routes for a specific namespace
 3. **`search_namespaces`** 🆕 - **Search namespaces by keyword (much more practical than listing all)**
 4. `get_radar_rules` - Get all radar rules for automatic feed detection
 5. `get_radar_rule` - Get a specific radar rule by name
-6. `get_categories` - Get all available categories
+6. `get_categories` - List known categories (informational; static guidance)
 7. `get_category` - Get feeds for a specific category
 
+8. **`search_routes`** 🆕 - Search routes by keyword across all namespaces or within a namespace (supports text/json output)
+9. **`get_route_detail`** 🆕 - Get detailed information for a specific route within a namespace (supports text/json output)
+10. **`suggest_route_keys`** 🆕 - Fuzzy-suggest closest route keys within a namespace for a partial path
+
 #### Content Retrieval Tool
-8. **`get_feed`** 🆕 - **Fetch actual RSS content from RSSHub paths (most important feature)**
+
+ 1. **`get_feed`** 🆕 - **Fetch actual RSS content from RSSHub paths**
+
 
 ### Usage Examples
 
 #### Get RSS Content
+
 ```json
 {
   "tool": "get_feed",
   "arguments": {
-    "path": "bilibili/user/video/2267573"
+  "path": "bilibili/user/video/2267573",
+  "format": "json"
   }
 }
 ```
 
 #### Search Namespaces
+
 ```json
 {
   "tool": "search_namespaces", 
   "arguments": {
     "query": "bili"
+  }
+}
+```
+
+#### List Tools (MCP protocol)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/list",
+  "id": "list-1"
+}
+```
+
+#### Search Routes
+
+```json
+{
+  "tool": "search_routes",
+  "arguments": {
+    "query": "live",
+    "namespace": "bilibili",
+    "limit": 10,
+    "format": "json"
+  }
+}
+```
+
+#### Get Route Detail
+
+```json
+{
+  "tool": "get_route_detail",
+  "arguments": {
+    "namespace": "bilibili",
+    "route_key": "/live/room/:roomID",
+    "format": "text"
+  }
+}
+```
+
+#### Get Radar Rules (JSON)
+
+```json
+{
+  "tool": "get_radar_rules",
+  "arguments": {
+    "format": "json"
+  }
+}
+```
+
+#### Get A Radar Rule (text)
+
+```json
+{
+  "tool": "get_radar_rule",
+  "arguments": {
+    "rule_name": "github.com",
+    "format": "text"
+  }
+}
+```
+
+#### Get Category (JSON)
+
+```json
+{
+  "tool": "get_category",
+  "arguments": {
+    "category": "programming",
+    "format": "json"
+  }
+}
+```
+
+#### Suggest Route Keys
+
+```json
+{
+  "tool": "suggest_route_keys",
+  "arguments": {
+    "namespace": "bilibili",
+    "partial": "live/ro",
+    "limit": 5
   }
 }
 ```
@@ -147,8 +242,11 @@ just test
 # Start the MCP server
 cargo run -p rsshub-mcp --bin rsshub-mcp
 
-# Test all 8 tools (including new RSS content retrieval)
+# Test all 10 tools (including new RSS content retrieval)
 cargo run -p mcp-client --bin quick_test
+
+# Note: start the server from the crate directory so it finds config.toml
+# (cd rsshub-mcp && cargo run -p rsshub-mcp --bin rsshub-mcp)
 
 # Basic connection test
 cargo run -p mcp-client --bin simple_test
@@ -156,13 +254,7 @@ cargo run -p mcp-client --bin simple_test
 
 ### Validation Status
 
-✅ **All 8 tools function correctly**  
-✅ **RSS content retrieval working**  
-✅ **Namespace search implemented**  
-✅ **MCP server starts normally**  
-✅ **All crates compile successfully**  
-✅ **Client tests pass**  
-✅ **Code quality standards met**
+Note: See quick_test for an end-to-end exercise of each tool. Build and run locally to validate in your environment.
 
 ## Advantages
 
@@ -194,13 +286,7 @@ cargo run -p mcp-client --bin simple_test
 
 ## Project Status
 
-✅ **All 8 tools function correctly**  
-✅ **RSS content retrieval working**  
-✅ **Namespace search implemented**  
-✅ **MCP server starts normally**  
-✅ **All crates compile successfully**  
-✅ **Client tests pass**  
-✅ **Code quality standards met**
+Note: Verified locally during development. Re-run quick_test after changes.
 
 ### Dependency Management
 

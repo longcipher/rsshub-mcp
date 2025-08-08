@@ -4,7 +4,11 @@
 //! allowing you to fetch namespace information, radar rules, and category data.
 
 #![allow(unused)]
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use eyre::Result;
 use serde::{Deserialize, Serialize};
@@ -16,12 +20,21 @@ const DEFAULT_TIMEOUT: u64 = 120;
 pub struct RsshubClientConfig {
     pub host: Option<String>,
     pub timeout: Option<u64>,
+    pub retries: Option<u32>,
+    pub retry_backoff_ms: Option<u64>,
+    pub namespaces_ttl_secs: Option<u64>,
+    pub radar_rules_ttl_secs: Option<u64>,
 }
 
 #[derive(Default, Debug, Clone)]
 pub struct RsshubApiClient {
     pub client: reqwest::Client,
     pub host: String,
+    cache: Arc<std::sync::Mutex<CacheStore>>,
+    retries: u32,
+    retry_backoff_ms: u64,
+    namespaces_ttl_secs: u64,
+    radar_rules_ttl_secs: u64,
 }
 
 impl RsshubApiClient {
@@ -29,20 +42,59 @@ impl RsshubApiClient {
         // Use default values if not provided in config
         let host = config.host.as_deref().unwrap_or(DEFAULT_HOST);
         let timeout = config.timeout.unwrap_or(DEFAULT_TIMEOUT);
+        let retries = config.retries.unwrap_or(3);
+        let retry_backoff_ms = config.retry_backoff_ms.unwrap_or(150);
+        let namespaces_ttl_secs = config.namespaces_ttl_secs.unwrap_or(300);
+        let radar_rules_ttl_secs = config.radar_rules_ttl_secs.unwrap_or(600);
         Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(timeout))
                 .build()
                 .expect("Failed to build HTTP client"),
             host: host.to_string(),
+            cache: Arc::new(std::sync::Mutex::new(CacheStore::default())),
+            retries,
+            retry_backoff_ms,
+            namespaces_ttl_secs,
+            radar_rules_ttl_secs,
         }
+    }
+
+    async fn get_with_retry(&self, url: &str) -> Result<reqwest::Response> {
+        let mut last_err = None;
+        for _ in 0..self.retries {
+            match self.client.get(url).send().await {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    last_err = Some(e);
+                    tokio::time::sleep(Duration::from_millis(self.retry_backoff_ms)).await;
+                }
+            }
+        }
+        Err(eyre::eyre!(
+            "HTTP GET failed after retries: {}",
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        ))
     }
 
     pub async fn get_all_namespaces(&self) -> Result<NamespaceResp> {
         let url = format!("{}/api/namespace", self.host);
-        let response = self.client.get(&url).send().await?;
+        // Cache using configured TTL
+        if let Some(v) = self
+            .cache
+            .lock()
+            .expect("Failed to lock cache mutex")
+            .get_json("namespaces", self.namespaces_ttl_secs)
+        {
+            return Ok(serde_json::from_value(v)?);
+        }
+        let response = self.get_with_retry(&url).await?;
         if response.status().is_success() {
             let routes: NamespaceResp = response.json().await?;
+            self.cache
+                .lock()
+                .expect("Failed to lock cache mutex")
+                .put_json("namespaces", &serde_json::to_value(&routes)?);
             Ok(routes)
         } else {
             Err(eyre::eyre!("Failed to fetch namespaces"))
@@ -51,7 +103,7 @@ impl RsshubApiClient {
 
     pub async fn get_namespace(&self, namespace: &str) -> Result<RoutesMap> {
         let url = format!("{}/api/namespace/{}", self.host, namespace);
-        let response = self.client.get(&url).send().await?;
+        let response = self.get_with_retry(&url).await?;
         if response.status().is_success() {
             let route: RoutesMap = response.json().await?;
             Ok(route)
@@ -62,9 +114,22 @@ impl RsshubApiClient {
 
     pub async fn get_all_radar_rules(&self) -> Result<RulesResp> {
         let url = format!("{}/api/radar/rules", self.host);
-        let response = self.client.get(&url).send().await?;
+        // Cache using configured TTL
+        if let Some(v) = self
+            .cache
+            .lock()
+            .expect("Failed to lock cache mutex")
+            .get_json("radar_rules", self.radar_rules_ttl_secs)
+        {
+            return Ok(serde_json::from_value(v)?);
+        }
+        let response = self.get_with_retry(&url).await?;
         if response.status().is_success() {
             let rules: RulesResp = response.json().await?;
+            self.cache
+                .lock()
+                .expect("Failed to lock cache mutex")
+                .put_json("radar_rules", &serde_json::to_value(&rules)?);
             Ok(rules)
         } else {
             Err(eyre::eyre!("Failed to fetch radar rules"))
@@ -73,7 +138,7 @@ impl RsshubApiClient {
 
     pub async fn get_radar_rule(&self, domain: &str) -> Result<RulesInfo> {
         let url = format!("{}/api/radar/rules/{}", self.host, domain);
-        let response = self.client.get(&url).send().await?;
+        let response = self.get_with_retry(&url).await?;
         if response.status().is_success() {
             let rule: RulesInfo = response.json().await?;
             Ok(rule)
@@ -84,7 +149,7 @@ impl RsshubApiClient {
 
     pub async fn get_category(&self, category: &str) -> Result<CategoryItems> {
         let url = format!("{}/api/category/{}", self.host, category);
-        let response = self.client.get(&url).send().await?;
+        let response = self.get_with_retry(&url).await?;
         if response.status().is_success() {
             let category: CategoryItems = response.json().await?;
             Ok(category)
@@ -97,7 +162,7 @@ impl RsshubApiClient {
     pub async fn get_feed(&self, path: &str) -> Result<FeedResponse> {
         let path = path.strip_prefix('/').unwrap_or(path);
         let url = format!("{}/{}", self.host, path);
-        let response = self.client.get(&url).send().await?;
+        let response = self.get_with_retry(&url).await?;
         if response.status().is_success() {
             let content = response.text().await?;
             let feed = self.parse_rss_content(&content)?;
@@ -109,14 +174,60 @@ impl RsshubApiClient {
 
     /// Parse RSS content using feedparser-like logic
     fn parse_rss_content(&self, content: &str) -> Result<FeedResponse> {
-        // For now, return the raw RSS content
-        // In a full implementation, you'd use a proper RSS parser
+        // Try RSS first
+        if let Ok(channel) = rss::Channel::read_from(content.as_bytes()) {
+            let items = channel
+                .items()
+                .iter()
+                .map(|it| FeedItem {
+                    title: it.title().unwrap_or("").to_string(),
+                    description: it.description().unwrap_or("").to_string(),
+                    link: it.link().unwrap_or("").to_string(),
+                    pub_date: it.pub_date().map(|s| s.to_string()),
+                    author: it.author().map(|s| s.to_string()),
+                    categories: it
+                        .categories()
+                        .iter()
+                        .map(|c| c.name().to_string())
+                        .collect(),
+                })
+                .collect();
+            return Ok(FeedResponse {
+                title: channel.title().to_string(),
+                description: channel.description().to_string(),
+                items,
+                raw_content: Some(content.to_string()),
+            });
+        }
+
+        // Fallback: return raw as before
         Ok(FeedResponse {
             title: "RSS Feed".to_string(),
             description: "RSS feed content".to_string(),
             items: vec![],
             raw_content: Some(content.to_string()),
         })
+    }
+}
+
+#[derive(Default, Debug)]
+struct CacheStore {
+    json: HashMap<String, (serde_json::Value, Instant)>,
+}
+
+impl CacheStore {
+    fn get_json(&self, key: &str, ttl_secs: u64) -> Option<serde_json::Value> {
+        self.json.get(key).and_then(|(v, t)| {
+            if t.elapsed().as_secs() <= ttl_secs {
+                Some(v.clone())
+            } else {
+                None
+            }
+        })
+    }
+    fn put_json(&mut self, key: &str, v: &serde_json::Value) {
+        self.json
+            .insert(key.to_string(), (v.clone(), Instant::now()));
     }
 }
 
@@ -297,6 +408,7 @@ mod tests {
         let config = RsshubClientConfig {
             host: Some(server.url()),
             timeout: Some(60),
+            ..Default::default()
         };
         let client = RsshubApiClient::new(config);
 
@@ -346,6 +458,7 @@ mod tests {
         let config = RsshubClientConfig {
             host: Some(server.url()),
             timeout: Some(60),
+            ..Default::default()
         };
         let client = RsshubApiClient::new(config);
 
@@ -394,6 +507,7 @@ mod tests {
         let config = RsshubClientConfig {
             host: Some(server.url()),
             timeout: Some(60),
+            ..Default::default()
         };
         let client = RsshubApiClient::new(config);
 
@@ -407,5 +521,60 @@ mod tests {
 
         // Verify result
         assert!(result.is_ok(), "Failed to fetch category from mock server");
+    }
+
+    #[tokio::test]
+    async fn test_cache_ttl_behavior() {
+        // Spin up mock server for namespaces
+        let mut server = mockito::Server::new_async().await;
+        let mock_endpoint = server
+            .mock("GET", "/api/namespace")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body_from_file("tests/namespace.json")
+            .create_async()
+            .await;
+
+        let config = RsshubClientConfig {
+            host: Some(server.url()),
+            timeout: Some(60),
+            retries: Some(1),
+            retry_backoff_ms: Some(10),
+            namespaces_ttl_secs: Some(1),
+            radar_rules_ttl_secs: Some(600),
+        };
+        let client = RsshubApiClient::new(config);
+
+        // First call hits server and caches
+        let _ = client.get_all_namespaces().await.unwrap();
+        mock_endpoint.assert_async().await;
+
+        // Second call within TTL should be served from cache (no new HTTP call)
+        let _ = client.get_all_namespaces().await.unwrap();
+
+        // Sleep to expire TTL
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Third call after TTL would call server again; create another mock to assert
+        let mock_endpoint2 = server
+            .mock("GET", "/api/namespace")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body_from_file("tests/namespace.json")
+            .create_async()
+            .await;
+        let _ = client.get_all_namespaces().await.unwrap();
+        mock_endpoint2.assert_async().await;
+    }
+
+    #[test]
+    fn test_parser_fallback_for_non_rss() {
+        let client = RsshubApiClient::new(RsshubClientConfig::default());
+        // Provide HTML instead of RSS to trigger fallback
+        let html = "<html><head><title>Not RSS</title></head><body>Hello</body></html>";
+        let parsed = client.parse_rss_content(html).unwrap();
+        assert!(parsed.raw_content.is_some());
+        assert!(parsed.items.is_empty());
+        assert_eq!(parsed.title, "RSS Feed");
     }
 }

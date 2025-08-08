@@ -64,6 +64,20 @@ A basic connection test client for fundamental MCP communication validation.
 cargo run -p mcp-client --bin simple_test
 ```
 
+### 3. `generic`
+
+A flexible CLI to call any MCP tool with JSON arguments.
+
+```bash
+# Usage
+cargo run -p mcp-client --bin generic -- <tool_name> '[json_arguments]' [--url http://host:port/mcp]
+
+# Examples
+cargo run -p mcp-client --bin generic -- get_radar_rule '{"domain":"github.com"}'
+RSSHUB_MCP_URL=http://127.0.0.1:8000/mcp \
+    cargo run -p mcp-client --bin generic -- get_namespace '{"namespace":"bilibili"}'
+```
+
 ## MCP Protocol Implementation
 
 ### JSON-RPC 2.0
@@ -99,6 +113,7 @@ let session_id = Uuid::new_v4().to_string();
 Example tool call structures:
 
 #### Namespace Search
+
 ```json
 {
     "jsonrpc": "2.0",
@@ -114,6 +129,7 @@ Example tool call structures:
 ```
 
 #### RSS Content Retrieval
+
 ```json
 {
     "jsonrpc": "2.0",
@@ -129,6 +145,7 @@ Example tool call structures:
 ```
 
 #### Namespace Information
+
 ```json
 {
     "jsonrpc": "2.0",
@@ -154,10 +171,12 @@ Example tool call structures:
 
 ### Custom Configuration
 
-You can modify the server endpoint in the source code:
+You can modify the server endpoint via environment variable or in the source code:
 
 ```rust
-let url = "http://127.0.0.1:8000/mcp";  // Change as needed
+// Prefer environment variable when running
+// RSSHUB_MCP_URL=http://127.0.0.1:8000/mcp
+let url = std::env::var("RSSHUB_MCP_URL").unwrap_or_else(|_| "http://127.0.0.1:8000/mcp".to_string());
 ```
 
 ## Development and Testing

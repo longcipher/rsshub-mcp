@@ -8,7 +8,7 @@ This crate provides a comprehensive Rust client for the RSSHub API, allowing dev
 
 ## Features
 
-- **Complete API Coverage**: Implements all 6 major RSSHub API endpoints
+- **API Coverage**: Implements core RSSHub API endpoints
 - **Type Safety**: Strongly typed responses with comprehensive data structures
 - **Async Support**: Built on `tokio` and `reqwest` for high-performance async operations
 - **Error Handling**: Uses `eyre` for ergonomic error handling
@@ -23,8 +23,8 @@ This crate provides a comprehensive Rust client for the RSSHub API, allowing dev
 2. **`get_namespace(namespace)`** - Get routes for a specific namespace
 3. **`get_all_radar_rules()`** - Get all radar rules for automatic feed detection
 4. **`get_radar_rule(domain)`** - Get a specific radar rule by domain name
-5. **`get_categories()`** - Get all available content categories
-6. **`get_category(category)`** - Get feeds for a specific category
+5. **`get_category(category)`** - Get feeds for a specific category
+6. **`get_feed(path)`** - Fetch RSS content from a RSSHub route
 
 ## Usage
 
@@ -76,13 +76,18 @@ println!("GitHub radar rule: {:#?}", domain_rule);
 ### Exploring Categories
 
 ```rust
-// Get all categories
-let categories = client.get_categories().await?;
-println!("Available categories: {:#?}", categories);
-
-// Get specific category feeds
+// Get specific category feeds (category keys are documented in RSSHub)
 let programming_feeds = client.get_category("programming").await?;
 println!("Programming feeds: {:#?}", programming_feeds);
+```
+
+### Fetching RSS Content
+
+```rust
+// Fetch raw RSS content for a route
+let feed = client.get_feed("ithome/news").await?;
+println!("Feed title: {}", feed.title);
+// Note: parsing is minimal; raw XML is available via feed.raw_content
 ```
 
 ## Data Structures

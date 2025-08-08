@@ -24,6 +24,161 @@ impl RSSHubService {
         Self { client }
     }
 
+    /// Handle search_routes tool call
+    async fn handle_search_routes(
+        &self,
+        query: &str,
+        namespace: Option<&str>,
+        limit: Option<usize>,
+        format: Option<&str>,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let q = query.to_lowercase();
+        let limit = limit.unwrap_or(20);
+
+        // Helper to check match
+        let matches = |key: &str, details: &rsshub_api::RouteDetails| {
+            let key_m = key.to_lowercase().contains(&q);
+            let name_m = details.name.to_lowercase().contains(&q);
+            let desc_m = details
+                .description
+                .as_ref()
+                .map(|d| d.to_lowercase().contains(&q))
+                .unwrap_or(false);
+            let ex_m = details
+                .example
+                .as_ref()
+                .map(|e| e.to_lowercase().contains(&q))
+                .unwrap_or(false);
+            key_m || name_m || desc_m || ex_m
+        };
+
+        let mut hits: Vec<serde_json::Value> = Vec::new();
+
+        if let Some(ns) = namespace {
+            let routes_map = self.client.get_namespace(ns).await?;
+            if let Some(routes) = routes_map.routes {
+                for (key, details) in routes.iter() {
+                    if matches(key, details) {
+                        hits.push(serde_json::json!({
+                            "namespace": ns,
+                            "route_key": key,
+                            "name": details.name,
+                            "description": details.description,
+                            "example": details.example,
+                        }));
+                        if hits.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            let all = self.client.get_all_namespaces().await?;
+            'outer: for (ns, routes_map) in all.iter() {
+                if let Some(routes) = routes_map.routes.as_ref() {
+                    for (key, details) in routes.iter() {
+                        if matches(key, details) {
+                            hits.push(serde_json::json!({
+                                "namespace": ns,
+                                "route_key": key,
+                                "name": details.name,
+                                "description": details.description,
+                                "example": details.example,
+                            }));
+                            if hits.len() >= limit {
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if format.unwrap_or("text").eq_ignore_ascii_case("json") {
+            Ok(serde_json::to_string_pretty(&hits)?)
+        } else if hits.is_empty() {
+            Ok(format!("No route found matching '{query}'."))
+        } else {
+            let mut lines = Vec::new();
+            lines.push(format!(
+                "Found {} routes (showing up to {limit}):",
+                hits.len()
+            ));
+            for h in hits.iter() {
+                let ns = h.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
+                let key = h.get("route_key").and_then(|v| v.as_str()).unwrap_or("");
+                let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let desc = h
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                lines.push(format!(
+                    "- {ns} {key} — {name}{}",
+                    if desc.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(" — {desc}")
+                    }
+                ));
+            }
+            Ok(lines.join("\n"))
+        }
+    }
+
+    /// Handle get_route_detail tool call
+    async fn handle_get_route_detail(
+        &self,
+        namespace: &str,
+        route_key: &str,
+        format: Option<&str>,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let routes_map = self.client.get_namespace(namespace).await?;
+        let Some(routes) = routes_map.routes else {
+            return Ok(format!("Namespace '{namespace}' has no routes."));
+        };
+        if let Some(details) = routes.get(route_key) {
+            if format.unwrap_or("text").eq_ignore_ascii_case("json") {
+                Ok(serde_json::to_string_pretty(details)?)
+            } else {
+                Ok(format!("{details:#?}"))
+            }
+        } else {
+            Ok(format!(
+                "Route '{route_key}' not found in namespace '{namespace}'."
+            ))
+        }
+    }
+
+    /// Suggest closest route keys within a namespace
+    async fn handle_suggest_route_keys(
+        &self,
+        namespace: &str,
+        partial: &str,
+        limit: Option<usize>,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let limit = limit.unwrap_or(10);
+        let routes_map = self.client.get_namespace(namespace).await?;
+        let Some(routes) = routes_map.routes else {
+            return Ok(format!("Namespace '{namespace}' has no routes."));
+        };
+        let p = partial.to_lowercase();
+        let mut keys: Vec<&String> = routes.keys().collect();
+        // Sort by simple heuristic: contains > starts_with > levenshtein-ish length diff
+        keys.sort_by_key(|k| {
+            let lk = k.to_lowercase();
+            let contains = if lk.contains(&p) { 0 } else { 1 };
+            let starts = if lk.starts_with(&p) { 0 } else { 1 };
+            let len_diff = (lk.len() as isize - p.len() as isize).abs();
+            (contains, starts, len_diff)
+        });
+        let list: Vec<String> = keys.into_iter().take(limit).cloned().collect();
+        Ok(format!(
+            "Suggested route keys (top {}):\n{}",
+            list.len(),
+            list.join("\n")
+        ))
+    }
     /// Create a new RSSHubService with custom configuration
     #[allow(dead_code)]
     pub fn with_config(config: RsshubClientConfig) -> Self {
@@ -43,9 +198,14 @@ impl RSSHubService {
     async fn handle_get_namespace(
         &self,
         namespace: &str,
+        format: Option<&str>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let routes = self.client.get_namespace(namespace).await?;
-        Ok(format!("{routes:#?}"))
+        if format.unwrap_or("text").eq_ignore_ascii_case("json") {
+            Ok(serde_json::to_string_pretty(&routes)?)
+        } else {
+            Ok(format!("{routes:#?}"))
+        }
     }
 
     /// Handle search_namespaces tool call - More useful than listing all
@@ -93,18 +253,28 @@ impl RSSHubService {
     /// Handle get_radar_rules tool call
     async fn handle_get_radar_rules(
         &self,
+        format: Option<&str>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let rules = self.client.get_all_radar_rules().await?;
-        Ok(format!("{rules:#?}"))
+        if format.unwrap_or("text").eq_ignore_ascii_case("json") {
+            Ok(serde_json::to_string_pretty(&rules)?)
+        } else {
+            Ok(format!("{rules:#?}"))
+        }
     }
 
     /// Handle get_radar_rule tool call
     async fn handle_get_radar_rule(
         &self,
         rule_name: &str,
+        format: Option<&str>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let rule = self.client.get_radar_rule(rule_name).await?;
-        Ok(format!("{rule:#?}"))
+        if format.unwrap_or("text").eq_ignore_ascii_case("json") {
+            Ok(serde_json::to_string_pretty(&rule)?)
+        } else {
+            Ok(format!("{rule:#?}"))
+        }
     }
 
     /// Handle get_categories tool call
@@ -120,31 +290,40 @@ impl RSSHubService {
     async fn handle_get_category(
         &self,
         category: &str,
+        format: Option<&str>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let category_items = self.client.get_category(category).await?;
-        Ok(format!("{category_items:#?}"))
+        if format.unwrap_or("text").eq_ignore_ascii_case("json") {
+            Ok(serde_json::to_string_pretty(&category_items)?)
+        } else {
+            Ok(format!("{category_items:#?}"))
+        }
     }
 
     /// Handle get_feed tool call - Fetch actual RSS content
     async fn handle_get_feed(
         &self,
         path: &str,
+        format: Option<&str>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let feed_response = self.client.get_feed(path).await?;
-
-        // Format the response in a more user-friendly way
-        if let Some(raw_content) = &feed_response.raw_content {
-            // Return the raw RSS content for now
-            // In a more sophisticated implementation, we'd parse and format the feed items
-            Ok(format!(
-                "RSS Feed: {}\nDescription: {}\n\nRaw Content:\n{}",
-                feed_response.title, feed_response.description, raw_content
-            ))
+        if format.unwrap_or("text").eq_ignore_ascii_case("json") {
+            Ok(serde_json::to_string_pretty(&feed_response)?)
         } else {
-            Ok(format!(
-                "Feed: {} - {}",
-                feed_response.title, feed_response.description
-            ))
+            // Text summary
+            let mut lines = Vec::new();
+            lines.push(format!("RSS Feed: {}", feed_response.title));
+            if !feed_response.description.is_empty() {
+                lines.push(format!("Description: {}", feed_response.description));
+            }
+            let show = feed_response.items.iter().take(3);
+            for (idx, item) in show.enumerate() {
+                lines.push(format!("- {} {}", idx + 1, item.title));
+            }
+            if feed_response.raw_content.is_some() {
+                lines.push("(raw content available)".to_string());
+            }
+            Ok(lines.join("\n"))
         }
     }
 }
@@ -175,7 +354,8 @@ impl ToolHandler for RSSHubService {
                         "namespace": {
                             "type": "string",
                             "description": "The namespace to query (e.g., 'bilibili', 'github')"
-                        }
+                        },
+                        "format": {"type": "string", "enum": ["text", "json"], "description": "Output format (default text)"}
                     },
                     "required": ["namespace"]
                 }),
@@ -204,7 +384,9 @@ impl ToolHandler for RSSHubService {
                 output_schema: None,
                 input_schema: json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "format": {"type": "string", "enum": ["text", "json"], "description": "Output format (default text)"}
+                    },
                     "required": []
                 }),
             },
@@ -218,15 +400,22 @@ impl ToolHandler for RSSHubService {
                     "properties": {
                         "rule_name": {
                             "type": "string",
-                            "description": "The name of the radar rule to query"
-                        }
+                            "description": "The domain/rule name to query (e.g., 'github.com')"
+                        },
+                        "domain": {
+                            "type": "string",
+                            "description": "Alias of rule_name; the domain to query (e.g., 'github.com')"
+                        },
+                        "format": {"type": "string", "enum": ["text", "json"], "description": "Output format (default text)"}
                     },
-                    "required": ["rule_name"]
+                    "required": []
                 }),
             },
             Tool {
                 name: "get_categories".to_string(),
-                description: "Get all available categories in RSSHub".to_string(),
+                description:
+                    "List known RSSHub categories (informational; use get_category for details)"
+                        .to_string(),
                 annotations: None,
                 output_schema: None,
                 input_schema: json!({
@@ -246,7 +435,8 @@ impl ToolHandler for RSSHubService {
                         "category": {
                             "type": "string",
                             "description": "The category name (e.g., 'tech', 'news', 'programming')"
-                        }
+                        },
+                        "format": {"type": "string", "enum": ["text", "json"], "description": "Output format (default text)"}
                     },
                     "required": ["category"]
                 }),
@@ -262,9 +452,60 @@ impl ToolHandler for RSSHubService {
                         "path": {
                             "type": "string",
                             "description": "The RSSHub path (e.g., 'bilibili/user/video/2267573', 'github/issue/DIYgod/RSSHub')"
-                        }
+                        },
+                        "format": {"type": "string", "enum": ["text", "json"], "description": "Output format (default text)"}
                     },
                     "required": ["path"]
+                }),
+            },
+            Tool {
+                name: "search_routes".to_string(),
+                description:
+                    "Search routes by keyword across all namespaces or within a specific namespace"
+                        .to_string(),
+                annotations: None,
+                output_schema: None,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search keyword (matches key, name, description, example)"},
+                        "namespace": {"type": "string", "description": "Optional namespace to restrict search"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Max results to return (default 20)"},
+                        "format": {"type": "string", "enum": ["text", "json"], "description": "Output format (default text)"}
+                    },
+                    "required": ["query"]
+                }),
+            },
+            Tool {
+                name: "get_route_detail".to_string(),
+                description: "Get detailed information for a specific route within a namespace"
+                    .to_string(),
+                annotations: None,
+                output_schema: None,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "namespace": {"type": "string", "description": "The namespace (e.g., 'bilibili')"},
+                        "route_key": {"type": "string", "description": "The route key as in namespace map (e.g., '/live/room/:roomID')"},
+                        "format": {"type": "string", "enum": ["text", "json"], "description": "Output format (default text)"}
+                    },
+                    "required": ["namespace", "route_key"]
+                }),
+            },
+            Tool {
+                name: "suggest_route_keys".to_string(),
+                description: "Suggest closest route keys within a namespace for a partial path"
+                    .to_string(),
+                annotations: None,
+                output_schema: None,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "namespace": {"type": "string", "description": "The namespace (e.g., 'bilibili')"},
+                        "partial": {"type": "string", "description": "Partial route key to match (e.g., 'live/room')"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Max suggestions to return (default 10)"}
+                    },
+                    "required": ["namespace", "partial"]
                 }),
             },
         ];
@@ -292,7 +533,12 @@ impl ToolHandler for RSSHubService {
                     .ok_or_else(|| {
                         MCPError::invalid_params("namespace parameter is required".to_string())
                     })?;
-                self.handle_get_namespace(namespace).await
+                let format = request
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.get("format"))
+                    .and_then(|v| v.as_str());
+                self.handle_get_namespace(namespace, format).await
             }
             "search_namespaces" => {
                 let query = request
@@ -302,17 +548,39 @@ impl ToolHandler for RSSHubService {
                     .and_then(|v| v.as_str());
                 self.handle_search_namespaces(query).await
             }
-            "get_radar_rules" => self.handle_get_radar_rules().await,
+            "get_radar_rules" => {
+                let format = request
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.get("format"))
+                    .and_then(|v| v.as_str());
+                self.handle_get_radar_rules(format).await
+            }
             "get_radar_rule" => {
-                let rule_name = request
+                // Accept either rule_name or domain for convenience
+                let rule_name_opt = request
                     .arguments
                     .as_ref()
                     .and_then(|args| args.get("rule_name"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        MCPError::invalid_params("rule_name parameter is required".to_string())
-                    })?;
-                self.handle_get_radar_rule(rule_name).await
+                    .or_else(|| {
+                        request
+                            .arguments
+                            .as_ref()
+                            .and_then(|args| args.get("domain"))
+                            .and_then(|v| v.as_str())
+                    });
+                let rule_name = rule_name_opt.ok_or_else(|| {
+                    MCPError::invalid_params(
+                        "rule_name or domain parameter is required".to_string(),
+                    )
+                })?;
+                let format = request
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.get("format"))
+                    .and_then(|v| v.as_str());
+                self.handle_get_radar_rule(rule_name, format).await
             }
             "get_categories" => self.handle_get_categories().await,
             "get_category" => {
@@ -324,7 +592,12 @@ impl ToolHandler for RSSHubService {
                     .ok_or_else(|| {
                         MCPError::invalid_params("category parameter is required".to_string())
                     })?;
-                self.handle_get_category(category).await
+                let format = request
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.get("format"))
+                    .and_then(|v| v.as_str());
+                self.handle_get_category(category, format).await
             }
             "get_feed" => {
                 let path = request
@@ -335,7 +608,71 @@ impl ToolHandler for RSSHubService {
                     .ok_or_else(|| {
                         MCPError::invalid_params("path parameter is required".to_string())
                     })?;
-                self.handle_get_feed(path).await
+                let format = request
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.get("format"))
+                    .and_then(|v| v.as_str());
+                self.handle_get_feed(path, format).await
+            }
+            "search_routes" => {
+                let args = request.arguments.as_ref().ok_or_else(|| {
+                    MCPError::invalid_params("arguments are required".to_string())
+                })?;
+                let query = args.get("query").and_then(|v| v.as_str()).ok_or_else(|| {
+                    MCPError::invalid_params("query parameter is required".to_string())
+                })?;
+                let namespace = args.get("namespace").and_then(|v| v.as_str());
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
+                let format = args.get("format").and_then(|v| v.as_str());
+                self.handle_search_routes(query, namespace, limit, format)
+                    .await
+            }
+            "get_route_detail" => {
+                let args = request.arguments.as_ref().ok_or_else(|| {
+                    MCPError::invalid_params("arguments are required".to_string())
+                })?;
+                let namespace =
+                    args.get("namespace")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            MCPError::invalid_params("namespace parameter is required".to_string())
+                        })?;
+                let route_key =
+                    args.get("route_key")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            MCPError::invalid_params("route_key parameter is required".to_string())
+                        })?;
+                let format = args.get("format").and_then(|v| v.as_str());
+                self.handle_get_route_detail(namespace, route_key, format)
+                    .await
+            }
+            "suggest_route_keys" => {
+                let args = request.arguments.as_ref().ok_or_else(|| {
+                    MCPError::invalid_params("arguments are required".to_string())
+                })?;
+                let namespace =
+                    args.get("namespace")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            MCPError::invalid_params("namespace parameter is required".to_string())
+                        })?;
+                let partial = args
+                    .get("partial")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        MCPError::invalid_params("partial parameter is required".to_string())
+                    })?;
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
+                self.handle_suggest_route_keys(namespace, partial, limit)
+                    .await
             }
             _ => {
                 return Err(MCPError::method_not_found(format!(
